@@ -17,8 +17,7 @@ You can also download our [pretrained model](https://drive.google.com/file/d/1iY
 and put it in ./exp/dcase/model/
 + To fine-tune SEDT, run
 ```shell script
-python train_sedt.py --gpus 0 --dataname dcase --enc_layers 6 --dec_at --fusion_strategy 1 2 3 --epochs 300 
---pretrain "Pretrained_SP_SEDT" --weak_loss_coef 0.25
+python train_sedt.py --gpus 0 --dataname dcase --enc_layers 6 --dec_at --fusion_strategy 1 2 3 --epochs 300 --pretrain "Pretrained_SP_SEDT" --weak_loss_coef 0.25
 ```
 ## Evaluate models  
   Download our [SP-SEDT(E=6)](https://drive.google.com/file/d/1ub6pauqHwerxKLfrnnkuUkMxhftoQ-gy/view?usp=sharing), put it in ./exp/dcase/model/ , then run
