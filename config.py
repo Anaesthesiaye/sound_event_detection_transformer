@@ -43,8 +43,8 @@ n_mels = 64
 max_frames = math.ceil(max_len_seconds * sample_rate / hop_size)  # 496
 
 # urbansound feature
-usample_rate =  44100 # 16000
-un_fft = 2048 # 1024
+usample_rate =  44100 
+un_fft = 2048 
 un_window = int(0.04 * usample_rate)
 uhop_size = int(0.02 * usample_rate)
 un_mels = 64
