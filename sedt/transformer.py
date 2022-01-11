@@ -20,18 +20,14 @@ class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
-                 return_intermediate_dec=False, parallel_soft_attn=False):
+                 return_intermediate_dec=False, self_sup=False):
         super().__init__()
 
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
-        if parallel_soft_attn:
-            decoder_layer = TransformerDecoderLayerParallelAttn(d_model, nhead, dim_feedforward, dropout,
-                                                                activation, normalize_before)
-        else:
-            decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout,
+        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout,
                                                     activation, normalize_before)
         decoder_norm = nn.LayerNorm(d_model)
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
@@ -41,57 +37,54 @@ class Transformer(nn.Module):
 
         self.d_model = d_model
         self.nhead = nhead
+        self.self_sup = self_sup
 
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed, decoder_mask=None):
-        # flatten NxCxHxW to HWxNxC
-        bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
-        mask = mask.flatten(1)
 
-        tgt = torch.zeros_like(query_embed)
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
-                          pos=pos_embed, query_pos=query_embed, tgt_mask=decoder_mask)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+    def forward(self, src, mask, query_embed, pos_embed, enc_at_embed=None, decoder_mask=None):
+        if self.self_sup:
+            # flatten NxCxHxW to HWxNxC
+            bs, c, h, w = src.shape
+            src = src.flatten(2).permute(2, 0, 1)
+            pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+            mask = mask.flatten(1)
 
-    def forward(self, src, mask, query_embed, pos_embed, enc_at_embed):
-        # flatten NxCxHxW to HWxNxC
-        bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        mask = mask.flatten(1)
-
-        tgt = torch.zeros_like(query_embed)
-        # # tgt_mask limits the query only focus on queries with the same class label
-        # tgt_mask = torch.zeros((tgt.shape[0], tgt.shape[0]), device=tgt.device)
-        # num_class = 10
-        # sub_num_q = tgt.shape[0] // num_class
-        # for i in range(num_class):
-        #     tgt_mask[sub_num_q * i:sub_num_q * (i + 1), sub_num_q * i:sub_num_q * (i + 1)] = 1
-        if enc_at_embed is not None:
-            enc_at_token = torch.zeros_like(src[0, :, :]).unsqueeze(dim=0)
-            src = torch.cat([enc_at_token, src], dim=0)
-            at_mask = torch.zeros_like(mask[:, 0]).unsqueeze(dim=0)
-            enc_mask = torch.cat([at_mask, mask], dim=1)
-            enc_at_embed = enc_at_embed.unsqueeze(1).repeat(1, bs, 1)
-            enc_pos_embed = torch.cat([enc_at_embed, pos_embed], dim=0)
-            memory = self.encoder(src, src_key_padding_mask=enc_mask, pos=enc_pos_embed)
-            hs = self.decoder(tgt, memory[1:, :, :], memory_key_padding_mask=mask,
-                              pos=pos_embed, query_pos=query_embed)
-            return memory[0, :, :], hs.transpose(1, 2), memory[1:, :, :].permute(1, 0, 2)
-        else:
+            tgt = torch.zeros_like(query_embed)
             memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
             hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
-                              pos=pos_embed, query_pos=query_embed)
-            # return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
-            return hs.transpose(1, 2), memory.permute(1, 0, 2)
+                              pos=pos_embed, query_pos=query_embed, tgt_mask=decoder_mask)
+            return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        else:
+            # flatten NxCxHxW to HWxNxC
+            bs, c, h, w = src.shape
+            src = src.flatten(2).permute(2, 0, 1)
+            pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+            query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+            mask = mask.flatten(1)
+
+            tgt = torch.zeros_like(query_embed)
+            if enc_at_embed is not None:
+                enc_at_token = torch.zeros_like(src[0, :, :]).unsqueeze(dim=0)
+                src = torch.cat([enc_at_token, src], dim=0)
+                at_mask = torch.zeros_like(mask[:, 0]).unsqueeze(dim=0)
+                enc_mask = torch.cat([at_mask, mask], dim=1)
+                enc_at_embed = enc_at_embed.unsqueeze(1).repeat(1, bs, 1)
+                enc_pos_embed = torch.cat([enc_at_embed, pos_embed], dim=0)
+                memory = self.encoder(src, src_key_padding_mask=enc_mask, pos=enc_pos_embed)
+                hs = self.decoder(tgt, memory[1:, :, :], memory_key_padding_mask=mask,
+                                  pos=pos_embed, query_pos=query_embed)
+                return memory[0, :, :], hs.transpose(1, 2), memory[1:, :, :].permute(1, 0, 2)
+            else:
+                memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+                hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
+                                  pos=pos_embed, query_pos=query_embed)
+                # return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+                return hs.transpose(1, 2), memory.permute(1, 0, 2)
+
 
 
 class TransformerEncoder(nn.Module):
@@ -422,7 +415,8 @@ def build_transformer(args):
         num_encoder_layers=args.enc_layers,
         num_decoder_layers=args.dec_layers,
         normalize_before=args.pre_norm,
-        return_intermediate_dec=True
+        return_intermediate_dec=True,
+        self_sup=args.self_sup
     )
 
 
