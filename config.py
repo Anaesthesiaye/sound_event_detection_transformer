@@ -14,7 +14,7 @@ import pandas as pd
 dir_root = "./exp/"
 
 # data
-dcase_dir = "./data/dcase2019/"# "/home/yzr/data/yzr/dcase2020/preprocessed_dataset"
+dcase_dir = "./data/dcase2019/"
 # # DESED Paths
 weak = dcase_dir + 'metadata/train/weak.tsv'
 synthetic = dcase_dir + 'metadata/train/synthetic_2019/soundscapes.tsv'
@@ -26,7 +26,7 @@ eval_desed = dcase_dir + "metadata/eval/public.tsv"
 audio_validation_dir = dcase_dir + '/audio/validation'
 
 # urbansound
-urbansed_dir =  "./data/URBAN-SED_v2.0.0/" # "/home/yzr/disk16t/yzr/URBAN-SED_v2.0.0/" # the directory of URBAN-SED dataset
+urbansed_dir =  "./data/URBAN-SED_v2.0.0/" 
 urban_train_tsv = urbansed_dir + "metadata/train.tsv"
 urban_valid_tsv = urbansed_dir + "metadata/validate.tsv"
 urban_eval_tsv = urbansed_dir + "metadata/test.tsv"
