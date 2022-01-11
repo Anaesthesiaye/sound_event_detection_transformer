@@ -24,10 +24,17 @@ python train_sedt.py --gpus 0 --dataname dcase --enc_layers 6 --dec_at --fusion_
   ```shell script
 python train_sedt.py --gpus 0 --dataname dcase --enc_layers 6 --dec_at --fusion_strategy 1 --eval --info SP_SEDT
 ```
+## Related papers
 ```
 @article{2021Sound,
   title={Sound Event Detection Transformer: An Event-based End-to-End Model for Sound Event Detection},
   author={ Ye, Zhirong  and  Wang, Xiangdong  and  Liu, Hong  and  Qian, Yueliang  and  Tao, Rui  and  Yan, Long  and  Ouchi, Kazushige },
+  year={2021},
+}
+@article{2021SP,
+  title={SP-SEDT: Self-supervised Pre-training for Sound Event Detection Transformer},
+  author={ Ye, Z.  and  Wang, X.  and  Liu, H.  and  Qian, Y.  and  Tao, R.  and  Yan, L.  and  Ouchi, K. },
+  journal={arXiv e-prints},
   year={2021},
 }
 ```
