@@ -1,4 +1,4 @@
-# SP-SEDT: Self-supervised pretraining  for SEDT 
+# SP-SEDT: Self-supervised Pretraining  for SEDT 
 
 ## Prepare your data
 + DCASE2019 Task4 Dataset  
