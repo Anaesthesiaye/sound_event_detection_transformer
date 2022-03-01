@@ -475,10 +475,15 @@ if __name__ == '__main__':
 
     for epoch in range(start_epoch, f_args.epochs):
         model.train()
-        if epoch >= f_args.epochs_ls:
+        if epoch == f_args.epochs_ls:
             logger.info("enter the fine-tuning stage")
             # load the best model of the learning stage
-            model.load_state_dict(state['model']['state_dict'])
+            try:
+                model_fname = os.path.join(saved_model_dir, f"{f_args.info}_2_best")
+                state = torch.load(model_fname)
+                model.load_state_dict(state['model']['state_dict'])
+            except:
+                logger.info("No best model exists, fine-tune current model")
             # fix the learning rate as 1e-5
             f_args.adjust_lr = False
             f_args.fine_tune = True
