@@ -369,7 +369,7 @@ if __name__ == '__main__':
             weak_data = DataLoadDf(dfs["weak"], encod_func, transforms, in_memory=cfg.in_memory)
             train_synth_data = DataLoadDf(dfs["synthetic"], encod_func, transforms, in_memory=cfg.in_memory)
             validation_data = DataLoadDf(dfs["validation"], encod_func, transform=transforms_valid, return_indexes=True)
-            eval_data = DataLoadDf(dfs["eval"], encod_func, transform=transforms, return_indexes=True)
+            eval_data = DataLoadDf(dfs["eval"], encod_func, transform=transforms_valid, return_indexes=True)
             train_dataset = [train_synth_data, weak_data]
             batch_sizes = [f_args.batch_size-f_args.n_weak, f_args.n_weak]
             weak_mask = slice(batch_sizes[0], f_args.batch_size)
