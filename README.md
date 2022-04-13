@@ -52,7 +52,7 @@ and put it in ./exp/dcase/model/
 python train_sedt.py --gpus 0 --batch_size 32 --n_weak 16 --dataname dcase --enc_layers 6 --dec_at --fusion_strategy 1 2 3 --epochs 300 --pretrain "Pretrained_SP_SEDT" --weak_loss_coef 0.25
 ```
 ## Evaluate models  
-  Download our [SP-SEDT(E=6, Eb_1=39.03)](https://drive.google.com/file/d/1JIhvRpvW6MC7N88PxCVQ8BpckaAYLDDU/view?usp=sharing), put it in ./exp/dcase/model/ , then run
+  Download our [SP-SEDT(E=6, Eb_F1=39.03)](https://drive.google.com/file/d/1JIhvRpvW6MC7N88PxCVQ8BpckaAYLDDU/view?usp=sharing), put it in ./exp/dcase/model/ , then run
   ```shell script
 python train_sedt.py --gpus 0 --dataname dcase --enc_layers 6 --dec_at --fusion_strategy 1 --eval --info SP_SEDT
 ```
