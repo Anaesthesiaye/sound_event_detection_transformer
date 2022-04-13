@@ -21,7 +21,7 @@ Download the dataset from the website of [DCASE](http://dcase.community/), and c
               --batch_size 64
               --fusion_strategy 1 
               --dec_at 
-              --weak_loss_coef 3
+              --weak_loss_coef 1
               --epochs 400 # total epochs
               --epochs_ls 280 # epochs of learning stage
               --lr_drop 160
