@@ -70,3 +70,4 @@ python train_sedt.py --gpus 0 --dataname dcase --enc_layers 6 --dec_at --fusion_
   year={2021},
 }
 ```
+The code for the SP-SEDT based system with data augmentation and semi-supervised learning will be updated soon.
