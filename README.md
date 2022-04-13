@@ -1,5 +1,5 @@
 # SP-SEDT: Self-supervised Pretraining  for SEDT 
-![image](https://github.com/Anaesthesiaye/sound_event_detection_transformer/blob/main/img/sp-sedt5.0.pdf)
+![image](img/sp-sedt5.0.pdf)
 ## Prepare your data
 + DCASE2019 Task4 Dataset  
 Download the dataset from the website of [DCASE](http://dcase.community/), and change $dcase_dir in config.py to your own
