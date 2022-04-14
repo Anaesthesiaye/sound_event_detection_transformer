@@ -5,8 +5,9 @@
 @file: collapse_event.py
 @time: 2020/9/2 21:43
 """
+import os, sys
+sys.path.append(os.path.abspath('.'))
 import pandas as pd
-import os
 from tqdm import tqdm
 import config as cfg
 
