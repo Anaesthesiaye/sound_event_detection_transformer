@@ -89,8 +89,8 @@ class SedData:
             self.hop_size = cfg.hop_size
             self.n_mels = cfg.n_mels
             base_feature_dir = osp.join(cfg.dcase_dir, "features")
-            if not self.compute_log:
-                ext_freq = "_nolog"
+        if not self.compute_log:
+            ext_freq = "_nolog"
         # Defined parameters
         self.dataname = dataname
         self.recompute_features = recompute_features
@@ -194,45 +194,27 @@ class SedData:
 
 
     def load_and_compute_mel_spec(self, wav_path):
-        if self.dataname == 'dcase':
-            (audio, _) = read_audio(wav_path, self.sample_rate)
-            ham_win = np.hamming(self.n_window)
-            spec = librosa.stft(
-                audio,
-                n_fft=self.n_fft,
-                win_length=self.n_window,
-                hop_length=self.hop_size,
-                window=ham_win,
-                center=True,
-                pad_mode='reflect'
-            )
-            mel_spec = librosa.feature.melspectrogram(
-                S=np.abs(spec),  # amplitude, for energy: spec**2 but don't forget to change amplitude_to_db.
-                sr=self.sample_rate,
-                n_mels=self.n_mels,
-                htk=False, norm=None)
-            if self.compute_log:
-                mel_spec = librosa.amplitude_to_db(mel_spec)  # 10 * log10(S**2 / ref), ref default is 1
-            mel_spec = mel_spec.T
-            mel_spec = mel_spec.astype(np.float32)
+        (audio, _) = read_audio(wav_path, self.sample_rate)
+        ham_win = np.hamming(self.n_window)
+        spec = librosa.stft(
+            audio,
+            n_fft=self.n_fft,
+            win_length=self.n_window,
+            hop_length=self.hop_size,
+            window=ham_win,
+            center=True,
+            pad_mode='reflect'
+        )
+        mel_spec = librosa.feature.melspectrogram(
+            S=np.abs(spec),  # amplitude, for energy: spec**2 but don't forget to change amplitude_to_db.
+            sr=self.sample_rate,
+            n_mels=self.n_mels,
+            htk=False, norm=None)
+        if self.compute_log:
+            mel_spec = librosa.amplitude_to_db(mel_spec)  # 10 * log10(S**2 / ref), ref default is 1
+        mel_spec = mel_spec.T
+        mel_spec = mel_spec.astype(np.float32)
 
-        elif self.dataname == "urbansed":
-            y, _ = librosa.load(wav_path, sr=self.sample_rate, dtype=np.float64)
-            hann_win = scipy.signal.hann(self.n_window, sym=False)
-            # Mel filter banks
-            mel_basis = librosa.filters.mel(sr=self.sample_rate, n_fft=self.n_fft, n_mels=self.n_mels, dtype=np.float64)
-            # Fast Fourier transform
-            spectrogram = np.abs(librosa.stft(y + eps,
-                                              n_fft=self.n_fft,
-                                              win_length=self.n_window,
-                                              hop_length=self.hop_size,
-                                              center=True,
-                                              window=hann_win))
-            # mel spectrum
-            mel_spectrum = np.dot(mel_basis, spectrogram)
-            # log mel spectrum
-            log_mel_spectrum = np.log(mel_spectrum + eps)
-            mel_spec = np.transpose(log_mel_spectrum)
         return mel_spec
 
     def _extract_features(self, wav_path, out_path):
