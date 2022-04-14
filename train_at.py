@@ -10,14 +10,13 @@ import torch.nn as nn
 import inspect
 
 from evaluation_measures import audio_tagging_results
-from utilities.Logger import create_logger
-from data_utils.Desed import DESED
-from utilities.ManyHotEncoder import ManyHotEncoder
-from utilities.Transforms import get_transforms
-from data_utils.DataLoad_ import DataLoadDf, data_prefetcher
+from utilities.Logger import create_logger, set_logger
+from data_utils.SedData import SedData
+from utilities.FrameEncoder import ManyHotEncoder
+from utilities.FrameTransforms import get_transforms
+from data_utils.DataLoad import DataLoadDf, data_prefetcher
 from utilities.Scaler import Scaler
 from torch.utils.data import DataLoader
-from audio_tag.model import build_at
 from audio_tag.backbone import build_backbone
 from utilities.utils import to_cuda_if_available, SaveBest
 import datetime
@@ -29,19 +28,19 @@ from pprint import  pprint
 import os
 
 
-def get_dfs(mdata, data_type):
-    if "urban" in data_type:
-        train_df = mdata.initialize_and_get_df_urbansound(cfg.urban_train_tsv)
-        val_df = mdata.initialize_and_get_df_urbansound(cfg.urban_test_tsv)
-        test_df = mdata.initialize_and_get_df_urbansound(cfg.urban_eval_tsv)
+def get_dfs(desed_dataset, dataname):
+    if "urban" in dataname:
+        train_df = desed_dataset.initialize_and_get_df(cfg.urban_train_tsv)
+        valid_df = desed_dataset.initialize_and_get_df(cfg.urban_valid_tsv)
+        eval_df = desed_dataset.initialize_and_get_df(cfg.urban_eval_tsv)
         return {"train": train_df,
-                "val": val_df,
-                "test": test_df}
+                "val": valid_df,
+                "test": eval_df}
     else:
-        synthetic_df = pd.read_csv(cfg.synthetic_weak, sep="\t")
-        validation_df = mdata.initialize_and_get_df(cfg.validation, audio_dir=cfg.audio_validation_dir)
-        weak_df = mdata.initialize_and_get_df(cfg.weak)
-        eval_df = mdata.initialize_and_get_df(cfg.eval_desed)
+        synthetic_df = desed_dataset.initialize_and_get_df(cfg.synthetic)
+        validation_df = desed_dataset.initialize_and_get_df(cfg.validation, audio_dir=cfg.audio_validation_dir)
+        weak_df = desed_dataset.initialize_and_get_df(cfg.weak)
+        eval_df = desed_dataset.initialize_and_get_df(cfg.eval_desed)
         train_df = synthetic_df.append(weak_df)
         return {"train": train_df,
                 "val": validation_df,
@@ -107,26 +106,18 @@ def evaluate(model, data_loader, decoder):
 if __name__ == "__main__":
     torch.manual_seed(2020)
     logger = create_logger(inspect.currentframe().f_code.co_name, terminal_level=cfg.terminal_level)
-    logger.info("Audio_Tag_Module")
-    logger.info(f"starting time ：{datetime.datetime.now()}")
 
     parser = argparse.ArgumentParser(description="")
     # model param
-    # parser.add_argument("--backbone", choices=["resnet50", "resnet18", "resnet34", "cnn_9"], default="resnet50")
     parser.add_argument("--pooling", choices=["max", "avg"], default="avg")
-    parser.add_argument("--pretrained", action="store_true")
-    parser.add_argument("--pretrained_model", type=str, default=None)
+    parser.add_argument("--pretrained", action="store_false", default=True)
     ###
     parser.add_argument('--hidden_dim', default=256, type=int,
                         help="Size of the embeddings (dimension of the transformer)")
-    parser.add_argument('--frozen_weights', type=str, default=None,
-                        help="Path to the pretrained model. If set, only the mask head will be trained")
     parser.add_argument('--backbone', default='resnet50', type=str,
                         help="Name of the convolutional backbone to use")
-    parser.add_argument('--dilation', action='store_true',
+    parser.add_argument('--dilation', action='store_false', default=True,
                         help="If true, we replace stride with dilation in the last convolutional block (DC5)")
-    parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
-                        help="Type of positional embedding to use on top of the image features")
     # train param
     parser.add_argument("--nepochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=128)
@@ -135,86 +126,71 @@ if __name__ == "__main__":
     parser.add_argument("--lr_drop", type=int, default=20)
     parser.add_argument("--gpu", type=str, default="-1")
     parser.add_argument("--back_up", action="store_true", default=False)
-    parser.add_argument("--train_backbone", action="store_true", default=False)
-    parser.add_argument("--info", type=str, default="" )
-
+    parser.add_argument("--fix_backbone", action="store_true", default=False)
     # data param
-    parser.add_argument('--data_type', default='urbansound', choices=['urbansound', 'dcase'])
+    parser.add_argument('--dataname', default='urbansed', choices=['urbansed', 'dcase'])
 
     f_args = parser.parse_args()
-    pprint(vars(f_args))
     os.environ["CUDA_VISIBLE_DEVICES"] = f_args.gpu
 
-    dir_root = "/home/yzr/data/yzr/python_workspace/sed_transformer/stored_data/audio_tag"
-    code_dir = os.path.join(dir_root, "code")
-    model_dir = os.path.join(dir_root, "model")
-    res_dir = os.path.join(dir_root, "res")
+    store_dir = os.path.join(cfg.dir_root, f_args.dataname, 'audio_tag')
+    code_dir = os.path.join(store_dir, "code")
+    model_dir = os.path.join(store_dir, "model")
     os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(res_dir, exist_ok=True)
-    model_name = "{}_{}_pre:{}_{}".format(f_args.backbone, f_args.pooling, f_args.pretrained, f_args.info)
+    model_name = f"{f_args.backbone}_{f_args.pooling}"
+    if f_args.pretrained:
+        model_name += '_pretrained'
     model_path = os.path.join(model_dir, model_name)
-    res_path = os.path.join(res_dir, model_name)
+    set_logger(model_name)
+    logger.info("Audio_Tag_Module")
+    logger.info(f"starting time ：{datetime.datetime.now()}")
+    pprint(vars(f_args))
 
     ################
     # code back-up
     ################
-    cur_time = datetime.datetime.now().strftime('%F_%H%M')
+    current_time = datetime.datetime.now().strftime('%F_%H%M')
     if f_args.back_up:
-        cur_code_dir = os.path.join(code_dir, cur_time+'_'+f_args.info)
+        saved_code_dir = os.path.join(store_dir, 'code')
+        # code file path
+        cur_code_dir = os.path.join(saved_code_dir, f'{current_time}_{f_args.info}')
         if os.path.exists(cur_code_dir):
             shutil.rmtree(cur_code_dir)
         os.makedirs(cur_code_dir)
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-        for filename in os.listdir(project_dir):
-            src_path = os.path.join(project_dir, filename)
-            dst_path = os.path.join(cur_code_dir, filename)
-            if "log" in src_path:
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        for filename in os.listdir(this_dir):
+            if filename in ['data', 'exp', 'log']:
                 continue
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dst_path)
-            if os.path.isfile(src_path):
-                shutil.copyfile(src_path, dst_path)
+            old_path = os.path.join(this_dir, filename)
+            new_path = os.path.join(cur_code_dir, filename)
+            if os.path.isdir(old_path):
+                shutil.copytree(old_path, new_path)
+            else:
+                shutil.copyfile(old_path, new_path)
 
 
     # model
-    # model = build_at(f_args)
     model = build_backbone(f_args)
     model = to_cuda_if_available(model)
-    if f_args.pretrained_model is not None:
-        if torch.cuda.is_available():
-            state = torch.load(f_args.pretrained_model)
-        else:
-            state = torch.load(f_args.pretrained_model, map_location=torch.device('cpu'))
-        model_dict = model.state_dict()
-        pretrained_dict = state['model']['state_dict']
-        pretrained_dict = {k.replace("backbone.0.", ""): v for k, v in pretrained_dict.items() if k.replace("backbone.0.", "") in model_dict}
-        # update current model dict
-        same = model_dict.keys() & pretrained_dict.keys()
-        total = model_dict.keys() | pretrained_dict.keys()
-        extra = [e for e in model_dict.keys() if e not in pretrained_dict.keys()]
-        model_dict.update(pretrained_dict)
-        model.load_state_dict(model_dict)
     logger.info(model)
     param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("number of parameters in the model: {}".format(param_num))
 
     # data preparation
-    dataset = DESED(base_feature_dir=os.path.join(cfg.workspace, "dataset", "features"),
-                    recompute_features=False,
-                    compute_log=False)
-    dfs = get_dfs(dataset, f_args.data_type)
-    if "urban" in f_args.data_type:
-        encoder = ManyHotEncoder(cfg.urban_classes, n_frames=cfg.umax_frames // cfg.ur_time_pooling_ratio)
+    dataset = SedData(f_args.dataname, recompute_features=False, compute_log=False)
+    dfs = get_dfs(dataset, f_args.dataname)
+    if "urban" in f_args.dataname:
+        encoder = ManyHotEncoder(cfg.urban_classes, n_frames=cfg.umax_frames)
         transformer = get_transforms(cfg.umax_frames, add_axis=0)
     else:
-        encoder = ManyHotEncoder(cfg.dcase_classes, n_frames=cfg.max_frames // cfg.time_pooling_ratio)
+        encoder = ManyHotEncoder(cfg.dcase_classes, n_frames=cfg.max_frames)
         transformer = get_transforms(cfg.max_frames, add_axis=0)
 
     train_data = DataLoadDf(dfs["train"], encoder.encode_weak, transform=transformer)
     scaler = Scaler()
     scaler.calculate_scaler(train_data)
 
-    transformer = get_transforms(cfg.umax_frames if "urban" in f_args.data_type else cfg.max_frames, scaler=scaler, add_axis=0)
+    transformer = get_transforms(cfg.umax_frames if "urbansed" in f_args.dataname else cfg.max_frames, scaler=scaler, add_axis=0)
     train_data = DataLoadDf(dfs["train"], encoder.encode_weak, transform=transformer, in_memory=cfg.in_memory, return_indexes=True)
     val_data = DataLoadDf(dfs["val"], encoder.encode_weak, transform=transformer, return_indexes=True)
     test_data = DataLoadDf(dfs["test"], encoder.encode_weak, transform=transformer, return_indexes=True)
@@ -265,7 +241,6 @@ if __name__ == "__main__":
     logger.info(f"testing model of epoch {state['epoch']} at {model_path}")
     model.eval()
     audio_tag_df = evaluate(model, val_loader, encoder.decode_weak)
-    audio_tag_df.to_csv(res_path, sep="\t", index=False, float_format="%.4f")
     clip_metric = audio_tagging_results(validation_labels_df, audio_tag_df)
     clip_macro_f1 = clip_metric.loc['avg', 'f']
     print("AT Class-wise clip metrics on validation set")
