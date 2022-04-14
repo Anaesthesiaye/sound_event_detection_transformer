@@ -161,8 +161,8 @@ if __name__ == '__main__':
     # train parameters
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-4, type=float)
-    parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--n_weak', default=64, type=int)
+    parser.add_argument('--batch_size', default=64, type=int)
+    parser.add_argument('--n_weak', default=16, type=int)
     parser.add_argument('--accumrating_gradient_steps', default=1, type=int)
     parser.add_argument('--adjust_lr', action='store_false', default=True)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
@@ -284,9 +284,9 @@ if __name__ == '__main__':
         os.makedirs(cur_code_dir)
         this_dir = os.path.dirname(os.path.abspath(__file__))
         for filename in os.listdir(this_dir):
-            old_path = os.path.join(this_dir, filename)
-            if 'log' in old_path:
+            if filename in ['data', 'exp', 'log']:
                 continue
+            old_path = os.path.join(this_dir, filename)
             new_path = os.path.join(cur_code_dir, filename)
             if os.path.isdir(old_path):
                 shutil.copytree(old_path, new_path)
