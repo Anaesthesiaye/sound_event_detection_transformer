@@ -14,7 +14,7 @@ from utilities.Logger import create_logger, set_logger
 from data_utils.SedData import SedData
 from utilities.FrameEncoder import ManyHotEncoder
 from utilities.FrameTransforms import get_transforms
-from data_utils.DataLoad import DataLoadDf, data_prefetcher
+from data_utils.DataLoad import DataLoadDf, data_prefetcher, ConcatDataset
 from utilities.Scaler import Scaler
 from torch.utils.data import DataLoader
 from audio_tag.backbone import build_backbone
@@ -41,16 +41,16 @@ def get_dfs(desed_dataset, dataname):
         validation_df = desed_dataset.initialize_and_get_df(cfg.validation, audio_dir=cfg.audio_validation_dir)
         weak_df = desed_dataset.initialize_and_get_df(cfg.weak)
         eval_df = desed_dataset.initialize_and_get_df(cfg.eval_desed)
-        train_df = synthetic_df.append(weak_df)
-        return {"train": train_df,
+        return {"weak": weak_df,
+                "synthetic": synthetic_df,
                 "val": validation_df,
                 "test": eval_df}
 
 
 def train(model, train_loader, optim, c_epoch, grad_step, max_norm=0.1):
     loss_func = nn.BCELoss()
-    prefetcher = data_prefetcher(train_loader, return_indexes=True)
-    (input, targets), _ = prefetcher.next()
+    prefetcher = data_prefetcher(train_loader)
+    input, targets = prefetcher.next()
     i = -1
     while input is not None:
         output = model(input)
@@ -62,7 +62,7 @@ def train(model, train_loader, optim, c_epoch, grad_step, max_norm=0.1):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             optim.step()
             optim.zero_grad()
-        (input, targets), _ = prefetcher.next()
+        input, targets = prefetcher.next()
     print("Epoch:{} Loss:{} lr:{}".format(c_epoch, loss.item(), optim.param_groups[0]["lr"]))
 
 
@@ -105,7 +105,6 @@ def evaluate(model, data_loader, decoder):
 
 if __name__ == "__main__":
     torch.manual_seed(2020)
-    logger = create_logger(inspect.currentframe().f_code.co_name, terminal_level=cfg.terminal_level)
 
     parser = argparse.ArgumentParser(description="")
     # model param
@@ -133,15 +132,16 @@ if __name__ == "__main__":
     f_args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = f_args.gpu
 
-    store_dir = os.path.join(cfg.dir_root, f_args.dataname, 'audio_tag')
+    store_dir = os.path.join(cfg.dir_root, f_args.dataname)
     code_dir = os.path.join(store_dir, "code")
     model_dir = os.path.join(store_dir, "model")
     os.makedirs(model_dir, exist_ok=True)
-    model_name = f"{f_args.backbone}_{f_args.pooling}"
+    model_name = f"backbone_{f_args.backbone}_{f_args.pooling}"
     if f_args.pretrained:
         model_name += '_pretrained'
     model_path = os.path.join(model_dir, model_name)
     set_logger(model_name)
+    logger = create_logger(__name__ + "/" + inspect.currentframe().f_code.co_name, terminal_level=cfg.terminal_level)
     logger.info("Audio_Tag_Module")
     logger.info(f"starting time ：{datetime.datetime.now()}")
     pprint(vars(f_args))
@@ -151,9 +151,8 @@ if __name__ == "__main__":
     ################
     current_time = datetime.datetime.now().strftime('%F_%H%M')
     if f_args.back_up:
-        saved_code_dir = os.path.join(store_dir, 'code')
         # code file path
-        cur_code_dir = os.path.join(saved_code_dir, f'{current_time}_{f_args.info}')
+        cur_code_dir = os.path.join(code_dir, f'{current_time}_{model_name}')
         if os.path.exists(cur_code_dir):
             shutil.rmtree(cur_code_dir)
         os.makedirs(cur_code_dir)
@@ -186,21 +185,23 @@ if __name__ == "__main__":
         encoder = ManyHotEncoder(cfg.dcase_classes, n_frames=cfg.max_frames)
         transformer = get_transforms(cfg.max_frames, add_axis=0)
 
-    train_data = DataLoadDf(dfs["train"], encoder.encode_weak, transform=transformer)
+    weak_data = DataLoadDf(dfs["weak"], encoder.encode_weak, transform=transformer)
+    syn_data = DataLoadDf(dfs["synthetic"], encoder.encode_weak, transform=transformer)
+    train_data = ConcatDataset([weak_data, syn_data])
     scaler = Scaler()
     scaler.calculate_scaler(train_data)
 
     transformer = get_transforms(cfg.umax_frames if "urbansed" in f_args.dataname else cfg.max_frames, scaler=scaler, add_axis=0)
-    train_data = DataLoadDf(dfs["train"], encoder.encode_weak, transform=transformer, in_memory=cfg.in_memory, return_indexes=True)
+    weak_data = DataLoadDf(dfs["weak"], encoder.encode_weak, transform=transformer, in_memory=cfg.in_memory)
+    syn_data = DataLoadDf(dfs["synthetic"], encoder.encode_weak, transform=transformer, in_memory=cfg.in_memory)
     val_data = DataLoadDf(dfs["val"], encoder.encode_weak, transform=transformer, return_indexes=True)
     test_data = DataLoadDf(dfs["test"], encoder.encode_weak, transform=transformer, return_indexes=True)
 
-    train_loader = DataLoader(train_data, batch_size=f_args.batch_size, shuffle=True, pin_memory=True)
+    train_loader = DataLoader(ConcatDataset([weak_data, syn_data]), batch_size=f_args.batch_size, shuffle=True, pin_memory=True)
     val_loader = DataLoader(val_data, batch_size=f_args.batch_size, shuffle=False, drop_last=False)
     test_loader = DataLoader(test_data, batch_size=f_args.batch_size, shuffle=False, drop_last=False)
 
     validation_labels_df = dfs["val"].drop("feature_filename", axis=1)
-    train_labels_df = dfs["train"].drop("feature_filename", axis=1)
     test_labels_df = dfs["test"].drop("feature_filename", axis=1)
 
 
@@ -215,14 +216,7 @@ if __name__ == "__main__":
         train(model, train_loader, optim, epoch, f_args.grad_steps)
         lr_scheduler.step()
         model = model.eval()
-        if epoch % 10 == 0:
-            logger.info("metric on training dataset")
-            audio_tag_df = evaluate(model, train_loader, encoder.decode_weak)
-            clip_metric = audio_tagging_results(train_labels_df, audio_tag_df)
-            clip_macro_f1 = clip_metric.loc['avg', 'f']
-            print("AT Class-wise clip metrics")
-            print("=" * 50)
-            print(clip_metric)
+
 
         audio_tag_df = evaluate(model, val_loader, encoder.decode_weak)
         clip_metric = audio_tagging_results(validation_labels_df, audio_tag_df)
