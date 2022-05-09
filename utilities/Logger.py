@@ -3,6 +3,8 @@ import sys
 import logging.config
 import os
 import time
+from utilities.distribute import is_main_process
+
 
 class Logger(object):
     def __init__(self, file_name="Default.log", stream=sys.stdout):
@@ -45,6 +47,10 @@ def create_logger(logger_name, terminal_level=logging.INFO):
             res_terminal_level = logging.NOTSET
     else:
         res_terminal_level = terminal_level
+
+    if not is_main_process():
+        res_terminal_level =  logging.ERROR
+
     logger.setLevel(res_terminal_level)
     # Remove the stdout handler
     logger_handlers = logger.handlers[:]

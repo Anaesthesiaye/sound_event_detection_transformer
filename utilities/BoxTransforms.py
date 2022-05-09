@@ -4,7 +4,8 @@ import librosa
 import numpy as np
 import torch
 from torchvision import transforms
-
+from PIL import ImageFilter
+import random
 
 class Transform:
     def transform_data(self, data):
@@ -20,6 +21,9 @@ class Transform:
         if type(data) is tuple:  # meaning there is more than one data_input (could be duet, triplet...)
             data = list(data)
             for k in range(len(data)):
+                if (type(self).__name__ == "TimeMask"):
+                    if (k == 0):
+                        continue
                 data[k] = self.transform_data(data[k])
             data = tuple(data)
         else:
@@ -122,10 +126,11 @@ class AugmentGaussianNoise(Transform):
                std: float, std of the Gaussian noise to add
            """
 
-    def __init__(self, mean=0., std=None, snr=None):
+    def __init__(self, mean=0., std=None, snr=None, p=0.5):
         self.mean = mean
         self.std = std
         self.snr = snr
+        self.p = p
 
     @staticmethod
     def gaussian_noise(features, snr):
@@ -162,13 +167,17 @@ class AugmentGaussianNoise(Transform):
                 (np.array, np.array)
                 (original data, noisy_data (data + noise))
         """
-        if self.std is not None:
-            noisy_data = data + np.abs(np.random.normal(0, 0.5 ** 2, data.shape))
-        elif self.snr is not None:
-            noisy_data = self.gaussian_noise(data, self.snr)
+        random_num = np.random.uniform(0, 1)
+        if random_num < self.p:
+            if self.std is not None:
+                noisy_data = data + np.abs(np.random.normal(0, 0.5 ** 2, data.shape))
+            elif self.snr is not None:
+                noisy_data = self.gaussian_noise(data, self.snr)
+            else:
+                raise NotImplementedError("Only (mean, std) or snr can be given")
+            return data, noisy_data
         else:
-            raise NotImplementedError("Only (mean, std) or snr can be given")
-        return data, noisy_data
+            return data, data
 
 
 class ToTensor(Transform):
@@ -197,6 +206,7 @@ class ToTensor(Transform):
         if self.unsqueeze_axis is not None:
             res_data = res_data.unsqueeze(self.unsqueeze_axis)
         return res_data
+
     def transform_label(self, label):
         label["labels"] = torch.from_numpy(label["labels"]).long()
         label["boxes"] = torch.from_numpy(label["boxes"]).float()
@@ -290,73 +300,21 @@ class Compose(object):
         return format_string
 
 
+class GaussianBlur(object):
+    """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
 
+    def __init__(self, sigma=[.1, 2.]):
+        self.sigma = sigma
 
-class Time_shift(Transform):
-    def __init__(self, p=0.2, mean=0, std=90):
-        self.p = p # probability of performing time_shift
-        self.mean = mean
-        self.std = std
-        self.shift_ratio = 0
-        self.random_num = 0
-
-    def transform_data(self, data):
-        """Time shifting.
-        Args:
-            data: tuple (data,noise_data) size: (channel, Time, Freq)
-            shift_size: shift size parameter
-        """
-        self.random_num = np.random.uniform(0,1)
-        if self.random_num < self.p:
-            t = data.shape[0]
-            shift_size = int(np.random.normal(self.mean, self.std, (1, ))[0]) % t
-            left = data[shift_size:, :]
-            right = data[:shift_size, :]
-            data = np.concatenate((left,right),axis=0)
-            self.shift_ratio = shift_size/t
-        return data
-    def transform_label(self, label):
-        '''
-        :param label: dict:{label:ndarray, boxes:[[center, duration]]}
-        :return:
-        '''
-        if self.random_num > self.ratio:
-            classes=[]
-            boxes=[]
-            length = len(label["boxes"])
-            if length==0:
-                return label
-            for i in range(length):
-                c, l = label["boxes"][i, 0], label["boxes"][i, 1]
-                if l==1:
-                    classes.append(label["labels"][i])
-                    boxes.append([c, l])
-                else:
-                    ts = c-l/2
-                    te = c+l/2
-                    ts = (ts+self.shift_ratio) % 1
-                    te = (te+self.shift_ratio) % 1
-                    if ts > te:
-                        # split one event to two events
-                        classes.append(label["labels"][i])
-                        boxes.append([(ts + 1) / 2, 1 - ts])
-                        classes.append(label["labels"][i])
-                        boxes.append([(0+te)/2, te])
-                    else:
-                        classes.append(label["labels"][i])
-                        boxes.append([(ts + te) / 2, te - ts])
-            label["labels"]=np.asarray(classes)
-            label["boxes"]=np.asarray(boxes)
-        return label
-
-
-
-
+    def __call__(self, x):
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        return x
 
 
 class Query(Transform):
     def __init__(self, fixed_patch_size=False):
-        self.fixed_patch_size=fixed_patch_size
+        self.fixed_patch_size = fixed_patch_size
         self.transformer = transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize((128, 64)),
@@ -366,7 +324,7 @@ class Query(Transform):
             # transforms.RandomGrayscale(p=0.2),
             # transforms.RandomApply([GaussianBlur([.1, 2.])], p=0.5),
             transforms.ToTensor()
-            ])
+        ])
 
     def transform_data(self, data):
         return data
@@ -380,8 +338,8 @@ class Query(Transform):
         patches = []
         for box in label['boxes']:
             c, l = box.numpy()
-            s, e = c - l/2, c + l/2
-            s_idx, e_idx = int(s*t), int(e*t)
+            s, e = c - l / 2, c + l / 2
+            s_idx, e_idx = int(s * t), int(e * t)
             if self.fixed_patch_size:
                 e_idx = min(t, s_idx + 128)
                 s_idx = e_idx - 128
@@ -389,22 +347,21 @@ class Query(Transform):
             else:
                 # make sure patch is not empty
                 if s_idx >= e_idx:
-                    s_idx = max(0, s_idx-1)
-                    e_idx = min(t, e_idx+1)
-                patch_ori = data[:, s_idx:e_idx,:]
+                    s_idx = max(0, s_idx - 1)
+                    e_idx = min(t, e_idx + 1)
+                patch_ori = data[:, s_idx:e_idx, :]
                 # map to [0,1]
                 min_v, max_v = patch_ori.min(), patch_ori.max()
-                patch_norm = (patch_ori-min_v)/(max_v-min_v)
+                patch_norm = (patch_ori - min_v) / (max_v - min_v)
                 patch_norm_t = self.transformer(patch_norm)
-                patch_t = patch_norm_t*(max_v-min_v)+min_v
+                patch_t = patch_norm_t * (max_v - min_v) + min_v
             patches.append(patch_t)
-        label["patches"] = torch.stack(patches,dim=0)
+        label["patches"] = torch.stack(patches, dim=0)
         return data, label
 
 
-
 class TimeMask(Transform):
-    def __init__(self, min_band_part=0.0, max_band_part=0.1, fade=False, p=0.5):
+    def __init__(self, min_band_part=0.0, max_band_part=0.1, fade=False, p=0.2):
         """
         :param min_band_part: Minimum length of the silent part as a fraction of the
             total sound length. Float.
@@ -413,16 +370,16 @@ class TimeMask(Transform):
         :param fade: Bool, Add linear fade in and fade out of the silent part.
         :param p: The probability of applying this transform
         """
-        self.min_band_part=min_band_part
-        self.max_band_part=max_band_part
+        self.min_band_part = min_band_part
+        self.max_band_part = max_band_part
         self.fade = fade
         self.p = p
         self.parameters = {}
 
     def randomize_parameters(self):
-        self.parameters["apply"] = np.random.uniform(0,1) < self.p
+        self.parameters["apply"] = np.random.uniform(0, 1) < self.p
         self.parameters["t"] = np.random.uniform(self.min_band_part, self.max_band_part)
-        self.parameters["t0"] = np.random.uniform(0, 1-self.parameters["t"])
+        self.parameters["t0"] = np.random.uniform(0, 1 - self.parameters["t"])
 
     def transform_data(self, data):
         self.randomize_parameters()
@@ -432,19 +389,21 @@ class TimeMask(Transform):
             t0 = int(self.parameters["t0"] * nframes)
             mask = np.zeros((t, nfreq))
             if self.fade:
-                fade_length = int(t*0.1)
-                mask[0:fade_length,:] = np.linspace(1,0,num=fade_length)
-                mask[-fade_length:, :] = np.linspace(0,1, num=fade_length)
-            data[t0:t0+t, :] *= mask
+                fade_length = int(t * 0.1)
+                mask[0:fade_length, :] = np.linspace(1, 0, num=fade_length)
+                mask[-fade_length:, :] = np.linspace(0, 1, num=fade_length)
+            data[t0:t0 + t, :] *= mask
         return data
 
+
 class FreqMask(Transform):
-    def __init__(self, min_mask_fraction=0.03, max_mask_fraction=0.25, fill_mode="constant", fill_constant=0, p=0.5):
-        self.min_mask_fraction=min_mask_fraction
-        self.max_mask_fraction=max_mask_fraction
+    def __init__(self, min_mask_fraction=0.03, max_mask_fraction=0.4, fill_mode="constant", fill_constant=0, p=0.5):
+        self.min_mask_fraction = min_mask_fraction
+        self.max_mask_fraction = max_mask_fraction
         assert fill_mode in ("mean", "constant")
-        self.fill_mode=fill_mode
-        self.constant=fill_constant
+        self.fill_mode = fill_mode
+        self.constant = fill_constant
+        self.p = p
         self.parameters = {}
 
     def randomize_parameters(self):
@@ -456,20 +415,44 @@ class FreqMask(Transform):
         self.randomize_parameters()
         if self.parameters["apply"]:
             nframe, nmel = data.shape
-            f = int(self.parameters["f"]*nmel)
-            f0 = int(self.parameters["f0"]*nmel)
+            f = int(self.parameters["f"] * nmel)
+            f0 = int(self.parameters["f0"] * nmel)
             if self.fill_mode == "mean":
-                fill_value = np.mean(data[:,f0:f0+f])
+                fill_value = np.mean(data[:, f0:f0 + f])
             else:
                 fill_value = self.constant
-            data[:, f0:f+f0] = fill_value
-        return  data
+            data[:, f0:f + f0] = fill_value
+        return data
 
 
+class FreqShift(Transform):
+    def __init__(self, p=0.5, max_band=4, mean=0, std=2):
+        self.p = p
+        self.max_band = max_band
+        self.mean = mean
+        self.std = std
+        self.parameters = {}
+
+    def randomize_parameters(self):
+        self.parameters["apply"] = np.random.uniform(0, 1) < self.p
+        shift_size  = int(np.random.normal(self.mean, self.std))
+        while abs(shift_size) > self.max_band:
+            shift_size = int(np.random.normal(self.mean, self.std))
+        self.parameters["shift_size"] = shift_size
+
+    def transform_data(self, data):
+        self.randomize_parameters()
+        if self.parameters["apply"]:
+            data = np.roll(data, self.parameters["shift_size"], axis=1)
+            if self.parameters["shift_size"] >= 0:
+                data[:, :self.parameters["shift_size"]] = 0
+            else:
+                data[:, self.parameters["shift_size"]:] = 0
+        return data
 
 
 def get_transforms(frames=None, scaler=None, add_axis=0, noise_dict_params=None, combine_channels_args=None,
-                   crop_patch=False, fixed_patch_size=False):
+                   crop_patch=False, fixed_patch_size=False, freq_mask=False, freq_shift=False, time_mask=False):
     transf = []
     unsqueeze_axis = None
     if add_axis is not None:
@@ -485,6 +468,16 @@ def get_transforms(frames=None, scaler=None, add_axis=0, noise_dict_params=None,
 
     if frames is not None:
         transf.append(PadOrTrunc(nb_frames=frames))
+
+    if time_mask:
+        transf.append(TimeMask())
+
+    if freq_mask:
+        transf.append(FreqMask(fill_mode="mean"))
+
+
+    if freq_shift:
+        transf.append(FreqShift())
 
     transf.append(ToTensor(unsqueeze_axis=unsqueeze_axis))
 

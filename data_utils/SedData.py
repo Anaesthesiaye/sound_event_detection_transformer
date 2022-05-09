@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
-import configparser
 import glob
 
 import numpy as np
@@ -14,7 +13,6 @@ import config as cfg
 from utilities.Logger import create_logger
 import soundfile
 import scipy
-logger = create_logger(__name__, terminal_level=cfg.terminal_level)
 eps = np.spacing(1, dtype=np.float64)
 
 class SedData:
@@ -105,6 +103,8 @@ class SedData:
         # create folder if not exist
         os.makedirs(self.feature_dir, exist_ok=True)
         os.makedirs(self.meta_feat_dir, exist_ok=True)
+        self.logger = create_logger(__name__, terminal_level=cfg.terminal_level)
+        print("test")
 
     def state_dict(self):
         """ get the important parameters to save for the class
@@ -156,7 +156,7 @@ class SedData:
         # Check parameters
         if audio_dir is None:
             audio_dir = meta_path_to_audio_dir(tsv_path)
-        assert osp.exists(audio_dir), f"the directory {audio_dir} does not exist"
+        # assert osp.exists(audio_dir), f"the directory {audio_dir} does not exist"
 
         # Path to save features, subdir, otherwise could have duplicate paths for synthetic data
         fdir = audio_dir
@@ -164,12 +164,12 @@ class SedData:
         subdir = osp.sep.join(fdir.split(osp.sep)[-2:])
         meta_feat_dir = osp.join(self.meta_feat_dir, subdir)
         feature_dir = osp.join(self.feature_dir, subdir)
-        logger.debug(feature_dir)
+        self.logger.debug(feature_dir)
         os.makedirs(meta_feat_dir, exist_ok=True)
         os.makedirs(feature_dir, exist_ok=True)
 
         df_meta = self.get_df_from_meta(tsv_path, nb_files)
-        logger.info(f"{tsv_path} Total file number: {len(df_meta.filename.unique())}")
+        self.logger.info(f"{tsv_path} Total file number: {len(df_meta.filename.unique())}")
 
         # Meta filename
         ext_tsv_feature = ""
@@ -181,11 +181,11 @@ class SedData:
 
         t = time.time()
         if not osp.exists(features_tsv):
-            logger.info(f"Getting features ...")
+            self.logger.info(f"Getting features ...")
             df_features = self.extract_features_from_df(df_meta, audio_dir, feature_dir)
             if len(df_features) != 0:
                 df_features.to_csv(features_tsv, sep="\t", index=False)
-                logger.info(f"features created/retrieved in {time.time() - t:.2f}s, metadata: {features_tsv}")
+                self.logger.info(f"features created/retrieved in {time.time() - t:.2f}s, metadata: {features_tsv}")
             else:
                 raise IndexError(f"Empty features DataFrames {features_tsv}")
         else:
@@ -224,7 +224,7 @@ class SedData:
                 os.makedirs(osp.dirname(out_path), exist_ok=True)
                 np.save(out_path, mel_spec)
             except IOError as e:
-                logger.error(e)
+                self.logger.error(e)
 
     def _extract_features_ss(self, wav_path, wav_paths_ss, out_path):
         try:
@@ -235,13 +235,13 @@ class SedData:
             os.makedirs(osp.dirname(out_path), exist_ok=True)
             np.save(out_path, features)
         except IOError as e:
-            logger.error(e)
+            self.logger.error(e)
 
     def _extract_features_file(self, filename, audio_dir, feature_dir, audio_dir_ss=None, pattern_ss=None,
                                ext_ss_feature_file="_ss", keep_sources=None):
         wav_path = osp.join(audio_dir, filename)
         if not osp.isfile(wav_path):
-            logger.error("File %s is in the tsv file but the feature is not extracted because "
+            self.logger.error("File %s is in the tsv file but the feature is not extracted because "
                          "file do not exist!" % wav_path)
             out_path = None
         else:
@@ -337,8 +337,6 @@ class SedData:
                 # sort_values and random_state are used to have the same filenames each time (also for normal and ss)
                 filenames_kept = filenames.sort_values().sample(nb_files, random_state=10)
                 df_kept = df[df[column].isin(filenames_kept)].reset_index(drop=True)
-
-            logger.debug(f"Taking subpart of the data, len : {nb_files}, df_len: {len(df)}")
         else:
             df_kept = df
         return df_kept
@@ -420,6 +418,32 @@ def generate_tsv_wav_durations(audio_dir, out_tsv):
     return meta_df
 
 
+def get_dfs(desed_dataset, dataname, unlabel_data=False):
+    if dataname == 'urbansed':
+        train_df = desed_dataset.initialize_and_get_df(cfg.urban_train_tsv)
+        valid_df = desed_dataset.initialize_and_get_df(cfg.urban_valid_tsv)
+        eval_df = desed_dataset.initialize_and_get_df(cfg.urban_eval_tsv)
+
+        data_dfs = {
+            "train": train_df,
+            "validation": valid_df,
+            "eval": eval_df
+        }
+    else:
+        weak_df = desed_dataset.initialize_and_get_df(cfg.weak)
+        synthetic_df = desed_dataset.initialize_and_get_df(cfg.synthetic)
+        validation_df = desed_dataset.initialize_and_get_df(cfg.validation, audio_dir=cfg.audio_validation_dir)
+        eval_df = desed_dataset.initialize_and_get_df(cfg.eval_desed)
+        data_dfs = {
+            "weak": weak_df,
+            "synthetic": synthetic_df,
+            "validation": validation_df,
+            "eval": eval_df
+        }
+        if unlabel_data:
+            unlabel_df = desed_dataset.initialize_and_get_df(cfg.unlabel)
+            data_dfs["unlabel"] = unlabel_df
+    return data_dfs
 
 
 

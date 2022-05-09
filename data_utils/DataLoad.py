@@ -4,7 +4,6 @@ import pandas as pd
 import torch
 import random
 import warnings
-
 from PIL import ImageFilter
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
@@ -15,7 +14,6 @@ from utilities.BoxTransforms import Compose
 
 torch.manual_seed(0)
 random.seed(0)
-logger = create_logger(__name__, terminal_level=cfg.terminal_level)
 
 
 class DataLoadDf(Dataset):
@@ -52,6 +50,7 @@ class DataLoadDf(Dataset):
         self.sigma = sigma
         self.mu = mu
         self.fixed_patch_size=fixed_patch_size
+        self.logger = create_logger(__name__, terminal_level=cfg.terminal_level)
         if self.in_memory:
             self.features = {}
 
@@ -149,7 +148,7 @@ class DataLoadDf(Dataset):
                 label = "empty"
 
         if index == 0:
-            logger.debug("label to encode: {}".format(label))
+            self.logger.debug("label to encode: {}".format(label))
         if self.encode_function is not None:
             # labels are a list of string or list of list [[label, onset, offset]]
             y = self.encode_function(label)

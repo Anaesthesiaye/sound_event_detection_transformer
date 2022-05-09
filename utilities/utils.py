@@ -1,8 +1,10 @@
 from __future__ import print_function
-import numpy as np
+
+import math
 import os
-from torch import nn, Tensor
-import matplotlib.pyplot as plt
+import numpy as np
+import shutil
+from torch import Tensor
 import time
 from collections import defaultdict, deque
 import datetime
@@ -10,33 +12,78 @@ from typing import Optional, List
 import torch
 import torchvision
 import torch.distributed as dist
-
-def weights_init(m):
-    """ Initialize the weights of some layers of neural networks, here Conv2D, BatchNorm, GRU, Linear
-        Based on the work of Xavier Glorot
-    Args:
-        m: the model to initialize
-    """
-    classname = m.__class__.__name__
-    if classname.find('Conv2dSubsampling') or classname.find('LinearClassifier') != -1:
-        pass
-    elif classname.find('Conv2d') != -1:
-        nn.init.xavier_uniform_(m.weight, gain=np.sqrt(2))
-        m.bias.data.fill_(0)
-    elif classname.find('BatchNorm') != -1:
-        m.weight.data.normal_(1.0, 0.02)
-        m.bias.data.fill_(0)
-    elif classname.find('GRU') != -1:
-        for weight in m.parameters():
-            if len(weight.size()) > 1:
-                nn.init.orthogonal_(weight.data)
-    elif classname.find('Linear') != -1:
-        m.weight.data.normal_(0, 0.01)
-        m.bias.data.zero_()
+from torch.optim.lr_scheduler import LambdaLR
+from utilities.distribute import is_dist_avail_and_initialized
 
 
-def to_cuda_if_available(*args):
-    """ Transfer object (Module, Tensor) to GPU if GPU available
+def get_cosine_schedule_with_warmup(optimizer,
+                                    num_training_steps,
+                                    num_cycles=7. / 16.,
+                                    num_warmup_steps=0,
+                                    last_epoch=-1):
+    '''
+    Get cosine scheduler (LambdaLR).
+    if warmup is needed, set num_warmup_steps (int) > 0.
+    '''
+
+    def _lr_lambda(current_step):
+        '''
+        _lr_lambda returns a multiplicative factor given an interger parameter epochs.
+        Decaying criteria: last_epoch
+        '''
+
+        if current_step < num_warmup_steps:
+            _lr = float(current_step) / float(max(1, num_warmup_steps))
+        else:
+            num_cos_steps = float(current_step - num_warmup_steps)
+            num_cos_steps = num_cos_steps / float(max(1, num_training_steps - num_warmup_steps))
+            _lr = max(0.0, math.cos(math.pi * num_cycles * num_cos_steps))
+        return _lr
+
+    return LambdaLR(optimizer, _lr_lambda, last_epoch)
+
+
+class EMA:
+    def __init__(self, model, decay):
+        self.model = model
+        self.decay = decay
+        self.shadow = {}
+        self.backup = {}
+
+    def load(self, ema_model):
+        for name, param in ema_model.named_parameters():
+            self.shadow[name] = param.data.clone()
+
+    def register(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                assert name in self.shadow
+                new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
+                self.shadow[name] = new_average.clone()
+
+    def apply_shadow(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                assert name in self.shadow
+                self.backup[name] = param.data
+                param.data = self.shadow[name]
+
+    def restore(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                assert name in self.backup
+                param.data = self.backup[name]
+        self.backup = {}
+
+
+
+def to_cuda_if_available(args):
+    """ Transfer object (Module, Tensor, List) to GPU if GPU available
     Args:
         args: torch object to put on cuda if available (needs to have object.cuda() defined)
 
@@ -44,20 +91,23 @@ def to_cuda_if_available(*args):
         Objects on GPU if GPUs available
     """
 
-    def dictlist_to_cuda(dict):
-        return [{k: v.cuda(non_blocking=True) for k, v in t.items()} for t in dict]
-
-    res = list(args)
     if torch.cuda.is_available():
         # print("use gpu")
-        for i, torch_obj in enumerate(args):
-            if type(torch_obj) is list:
-                res[i] = dictlist_to_cuda(torch_obj)
-            else:
-                res[i] = torch_obj.cuda()
-    if len(res) == 1:
-        return res[0]
-    return res
+        if isinstance(args, Tensor) or isinstance(args, NestedTensor) or isinstance(args, torch.nn.Module):
+            return args.cuda()
+        if isinstance(args, dict):
+            for k, v in args.items():
+                args[k] = to_cuda_if_available(v)
+            return args
+        if isinstance(args, list):
+            for i, obj in enumerate(args):
+                args[i] = to_cuda_if_available(obj)
+            return args
+        if isinstance(args, tuple):
+            res = []
+            for i, obj in enumerate(args):
+                res.append(to_cuda_if_available(obj))
+            return tuple(res)
 
 
 class SaveBest:
@@ -115,8 +165,10 @@ class EarlyStopping:
         current_epoch: int, the current epoch of the model
     """
 
-    def __init__(self, patience, val_comp="inf", init_patience=0):
+    def __init__(self, patience, fusion_strategy, val_comp="inf", init_patience=0):
         self.patience = patience
+        self.fusion_strategy = fusion_strategy
+        self.num_strategy = len(fusion_strategy)
         self.first_early_wait = init_patience
         self.val_comp = val_comp
         if val_comp == "inf":
@@ -126,7 +178,9 @@ class EarlyStopping:
         else:
             raise NotImplementedError("value comparison is only 'inf' or 'sup'")
         self.current_epoch = 0
+        self.current_strategy_index = 0
         self.best_epoch = 0
+        self.best_strategy = fusion_strategy[0]
 
     def apply(self, value):
         """ Apply the callback
@@ -144,10 +198,17 @@ class EarlyStopping:
         if current:
             self.best_val = value
             self.best_epoch = self.current_epoch
-        elif self.current_epoch - self.best_epoch > self.patience and self.current_epoch > self.first_early_wait:
+            self.best_strategy = self.fusion_strategy[self.current_strategy_index]
+        elif self.current_strategy_index + 1 == self.num_strategy and \
+                self.current_epoch - self.best_epoch > self.patience and \
+                self.current_epoch > self.first_early_wait:
             self.current_epoch = 0
             return True
-        self.current_epoch += 1
+
+        self.current_strategy_index += 1
+        if self.current_strategy_index == self.num_strategy:
+            self.current_strategy_index = 0
+            self.current_epoch += 1
         return False
 
 
@@ -229,6 +290,19 @@ class SmoothedValue(object):
         self.count += n
         self.total += value * n
 
+    def synchronize_between_processes(self):
+        """
+        Warning: does not synchronize the deque!
+        """
+        if not is_dist_avail_and_initialized():
+            return
+        t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
+        dist.barrier()
+        dist.all_reduce(t)
+        t = t.tolist()
+        self.count = int(t[0])
+        self.total = t[1]
+
 
     @property
     def median(self):
@@ -284,11 +358,25 @@ class MetricLogger(object):
     def __str__(self):
         loss_str = []
         for name, meter in self.meters.items():
+            if "unsup" in name:
+                continue
             loss_str.append(
                 "{}: {}".format(name, str(meter))
             )
-        return self.delimiter.join(loss_str)
+        loss_str_unsup = []
+        for name, meter in self.meters.items():
+            if "unsup" in name:
+                loss_str_unsup.append(
+                    "{}: {}".format(name, str(meter))
+                )
+        if len(loss_str_unsup):
+            return self.delimiter.join(loss_str) + "\n" + self.delimiter.join(loss_str_unsup)
+        else:
+            return self.delimiter.join(loss_str)
 
+    def synchronize_between_processes(self):
+        for meter in self.meters.values():
+            meter.synchronize_between_processes()
 
     def add_meter(self, name, meter):
         self.meters[name] = meter
@@ -351,15 +439,23 @@ class MetricLogger(object):
 
 def collate_fn(batch):
     batch = list(zip(*batch))
-    index = None
-    if type(batch[1][0]) is not dict:
+    if type(batch[1][0]) is dict:
+        data, label = batch
+        index = None
+    else:
         index = batch[1]
-        batch = list(zip(*batch[0]))
-    batch[0] = nested_tensor_from_tensor_list(batch[0])
-    batch[1] = list(batch[1])
+        data, label = list(zip(*batch[0]))
+
+    if isinstance(data[0], tuple):
+        data =  list(map(tuple, zip(*data)))
+        for i, d in enumerate(data):
+            data[i] = nested_tensor_from_tensor_list(d)
+    else:
+        data = nested_tensor_from_tensor_list(data)
+    batch = (data, list(label))
     if index is not None:
         batch = (batch, index)
-    return tuple(batch)
+    return batch
 
 
 def _max_by_axis(the_list):
@@ -456,6 +552,10 @@ class NestedTensor(object):
     def decompose(self):
         return self.tensors, self.mask
 
+    def __getitem__(self, i: slice):
+        if isinstance(i, slice):
+            return NestedTensor(self.tensors[i], self.mask[i])
+
     def __repr__(self):
         return str(self.tensors)
 
@@ -479,50 +579,21 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
-    if not dist.is_initialized():
-        return False
-    return True
 
-def get_rank():
-    if not is_dist_avail_and_initialized():
-        return 0
-    return dist.get_rank()
-
-
-def is_main_process():
-    return get_rank() == 0
-
-
-def get_world_size():
-    if not is_dist_avail_and_initialized():
-        return 1
-    return dist.get_world_size()
-
-def reduce_dict(input_dict, average=True):
-    """
-    Args:
-        input_dict (dict): all the values will be reduced
-        average (bool): whether to do average or sum
-    Reduce the values in the dictionary from all processes so that all processes
-    have the averaged results. Returns a dict with the same fields as
-    input_dict, after reduction.
-    """
-    world_size = get_world_size()
-    if world_size < 2:
-        return input_dict
-    with torch.no_grad():
-        names = []
-        values = []
-        # sort the keys so that they are consistent across processes
-        for k in sorted(input_dict.keys()):
-            names.append(k)
-            values.append(input_dict[k])
-        values = torch.stack(values, dim=0)
-        dist.all_reduce(values)
-        if average:
-            values /= world_size
-        reduced_dict = {k: v for k, v in zip(names, values)}
-    return reduced_dict
+def back_up_code(save_path, exp_info):
+    # code file path
+    current_time = time.strftime("%Y%m%d-%H%M", time.localtime(time.time()))
+    cur_code_dir = os.path.join(save_path, 'code', f'{current_time}_{exp_info}')
+    if os.path.exists(cur_code_dir):
+        shutil.rmtree(cur_code_dir)
+    os.makedirs(cur_code_dir)
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    for filename in os.listdir(this_dir):
+        if filename in ['data', 'exp', 'log']:
+            continue
+        old_path = os.path.join(this_dir, filename)
+        new_path = os.path.join(cur_code_dir, filename)
+        if os.path.isdir(old_path):
+            shutil.copytree(old_path, new_path)
+        else:
+            shutil.copyfile(old_path, new_path)

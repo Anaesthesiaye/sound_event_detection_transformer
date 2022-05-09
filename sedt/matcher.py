@@ -1,12 +1,17 @@
+# ------------------------------------------------------------------------
+# Modified from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# ------------------------------------------------------------------------
 """
 Modules to compute the matching cost and solve the corresponding LSAP.
 """
+
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 from collections import Counter
 from utilities.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+import config as cfg
 
 
 class HungarianMatcher(nn.Module):
@@ -34,7 +39,7 @@ class HungarianMatcher(nn.Module):
         assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
 
     @torch.no_grad()
-    def forward(self, outputs, targets, fine_tune=False, normalize=False):
+    def forward(self, outputs, targets, fine_tune=False, normalize=False, fl = False):
         """ Performs the matching
 
         Params:
@@ -57,17 +62,24 @@ class HungarianMatcher(nn.Module):
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
         # We flatten to compute the cost matrices in a batch
-        out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, num_classes]
+        out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1) if not fl else outputs["pred_logits"].flatten(0, 1).sigmoid()  # [batch_size * num_queries, num_classes]
         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
 
         # Also concat the target labels and boxes
-        tgt_ids = torch.cat([v["labels"] for v in targets])
+        tgt_ids = torch.cat([v["labels"][:len(v["boxes"])] for v in targets])
         tgt_bbox = torch.cat([v["boxes"] for v in targets])
 
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
         # The 1 is a constant that doesn't change the matching, it can be ommitted.
-        cost_class = -out_prob[:, tgt_ids]
+        if not fl:
+            cost_class = -out_prob[:, tgt_ids]
+        else:
+            alpha_fl = cfg.alpha_fl
+            gamma_fl = cfg.gamma_fl
+            neg_cost_class = (1 - alpha_fl) * (out_prob ** gamma_fl) * (-(1 - out_prob + 1e-8).log())
+            pos_cost_class = alpha_fl * ((1 - out_prob) ** gamma_fl) * (-(out_prob + 1e-8).log())
+            cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
         # Compute the L1 cost between boxes
         cost_bbox = torch.cdist(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox), p=1)
@@ -108,15 +120,16 @@ class HungarianMatcher(nn.Module):
                 idx += [(torch.cat([i1[0], torch.arange(num_queries)[reserved]], dim=-1),
                          torch.cat([i1[1], torch.as_tensor(i2[1], dtype=torch.int64)[reserved]], dim=-1))]
 
-        for _, tgt in idx:
+        for i, (_, tgt) in enumerate(idx):
             if normalize:
                 cur_list = tgt.tolist()
                 num = Counter(cur_list)
-                coef = [1/num[i] for i in cur_list]
+                coef = torch.tensor([1 / num[i] for i in cur_list], dtype=torch.float32).cpu()
+            elif "ratio" in targets[i]:
+                coef = targets[i]["ratio"].cpu()
             else:
-                coef = [1]*len(tgt)
-            Coef.append(torch.tensor(coef, dtype=torch.float32))
-
+                coef = torch.tensor([1] * len(tgt), dtype=torch.float32).cpu()
+            Coef.append(coef)
         return idx, Coef
 
 
@@ -124,4 +137,5 @@ class HungarianMatcher(nn.Module):
 
 def build_matcher(args):
     return HungarianMatcher(cost_class=args.set_cost_class, cost_bbox=args.set_cost_bbox,
-                            cost_giou=args.set_cost_giou, epsilon=args.epsilon, alpha=args.alpha)
+                                cost_giou=args.set_cost_giou, epsilon=args.epsilon, alpha=args.alpha)
+

@@ -1,9 +1,9 @@
-#!/usr/bin/env python
-# encoding: utf-8
+# ------------------------------------------------------------------------
+# Modified from UP-DETR (https://github.com/dddzg/up-detr)
+# Copyright (c) Tencent, Inc. and its affiliates. All Rights Reserved.
+# ------------------------------------------------------------------------
 """
-@author: yzr
-@file: spsedt.py
-@time: 2021/4/18 13:22
+SP-SEDT model
 """
 import torch
 from torch import nn
