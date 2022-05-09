@@ -7,8 +7,6 @@ import json
 from utilities.Logger import create_logger
 
 
-logger = create_logger(__name__)
-
 
 class Scaler:
     """
@@ -19,6 +17,7 @@ class Scaler:
         self.mean_ = None
         self.mean_of_square_ = None
         self.std_ = None
+        self.logger = create_logger(__name__)
 
     # compute the mean incrementaly
     def mean(self, data, axis=-1):
@@ -40,7 +39,7 @@ class Scaler:
        Splits a dataset in to train test validation.
        :param dataset: dataset, from DataLoad class, each sample is an (X, y) tuple.
        """
-        logger.info('computing mean')
+        self.logger.info('computing mean')
         start = time.time()
 
         shape = None
@@ -87,7 +86,7 @@ class Scaler:
         #     mean = mean * (1 - weight) + self.mean(X, axis=-1) * weight
         #     mean_of_square = mean_of_square * (1 - weight) + self.mean(data_square, axis=-1) * weight
 
-        logger.debug('time to compute means: ' + str(time.time() - start))
+        self.logger.debug('time to compute means: ' + str(time.time() - start))
         return self
 
     def std(self, variance):

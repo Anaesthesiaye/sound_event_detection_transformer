@@ -33,6 +33,7 @@ urban_eval_tsv = urbansed_dir + "metadata/test.tsv"
 
 
 max_len_seconds = 10.
+noise_snr = 30
 
 # dcase features
 sample_rate = 16000
@@ -53,7 +54,7 @@ umax_frames = int(max_len_seconds * usample_rate / uhop_size)
 # Training
 checkpoint_epochs = None
 save_best = True
-early_stopping = None
+early_stopping = True
 es_init_wait = 50  # es for early stopping
 in_memory = True
 
@@ -65,3 +66,8 @@ urban_classes = pd.read_csv(os.path.join(file_path, urban_train_tsv),
 
 # Logger
 terminal_level = logging.INFO
+
+# focal loss related
+alpha_fl = 0.5
+gamma_fl = float(1)
+

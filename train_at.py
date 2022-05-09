@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import inspect
 
-from evaluation_measures import audio_tagging_results
+from utilities.metrics import audio_tagging_results
 from utilities.Logger import create_logger, set_logger
 from data_utils.SedData import SedData
 from utilities.FrameEncoder import ManyHotEncoder

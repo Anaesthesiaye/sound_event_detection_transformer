@@ -20,8 +20,6 @@ def build_model(args):
             num_classes=num_classes,
             num_queries=args.num_queries,
             aux_loss=args.aux_loss,
-            dec_at=args.dec_at,
-            pooling=args.pooling,
             feature_recon=args.feature_recon,
             query_shuffle=args.query_shuffle,
             num_patches=args.num_patches
