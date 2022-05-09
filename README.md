@@ -95,7 +95,7 @@ python train_sedt.py
 ```
 # DCASE challenge system
 A SP-SEDT-based system is constructed with mixup, frequency mask, frequency shift and time mask as data augmentation methods, and hybrid pseudo-labelling/mean-teacher as semi-supervised learning method where a teacher model is updated from the student model online using exponential moving average strategy and used to generate hard pseudo labels for unlabeled data.
-##Train models
+## Train models
 + To prepare a teahcer model with weak and synthetic subsets, download [SP-SEDT(E=6)](https://drive.google.com/file/d/1TpR0YhmPxVYyJ0HOm1tn4AnYPqZe442-/view?usp=sharing) pretrained with only dcase2019 unlabel subset, put it in ./exp/dcase/model/, then run
 ```shell script
 python train_sedt.py 
