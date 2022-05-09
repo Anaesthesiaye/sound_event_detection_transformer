@@ -160,4 +160,3 @@ python train_ss_sedt.py
   year={2021},
 }
 ```
-The code for the SP-SEDT based system with data augmentation and semi-supervised learning will be updated soon.
