@@ -104,7 +104,6 @@ class SedData:
         os.makedirs(self.feature_dir, exist_ok=True)
         os.makedirs(self.meta_feat_dir, exist_ok=True)
         self.logger = create_logger(__name__, terminal_level=cfg.terminal_level)
-        print("test")
 
     def state_dict(self):
         """ get the important parameters to save for the class
@@ -156,7 +155,7 @@ class SedData:
         # Check parameters
         if audio_dir is None:
             audio_dir = meta_path_to_audio_dir(tsv_path)
-        # assert osp.exists(audio_dir), f"the directory {audio_dir} does not exist"
+        assert osp.exists(audio_dir), f"the directory {audio_dir} does not exist"
 
         # Path to save features, subdir, otherwise could have duplicate paths for synthetic data
         fdir = audio_dir

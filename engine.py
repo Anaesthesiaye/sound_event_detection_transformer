@@ -65,13 +65,6 @@ def train(train_loader, model, criterion, optimizer, c_epoch, accumrating_gradie
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         # reduce losses over all GPUs for logging purposes
-        # loss_dict_reduced = reduce_dict(loss_dict)
-        # loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-        #                               for k, v in loss_dict_reduced.items()}
-        # loss_dict_reduced_scaled = {k: v * weight_dict[k]
-        #                             for k, v in loss_dict_reduced.items() if k in weight_dict}
-        # losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-        # loss_value = losses_reduced_scaled.item()
         loss_value = get_reduced_loss(loss_dict, weight_dict, metric_logger)
 
         if not math.isfinite(loss_value):
@@ -87,7 +80,6 @@ def train(train_loader, model, criterion, optimizer, c_epoch, accumrating_gradie
             optimizer.zero_grad()
 
         global_step += 1
-        # metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(loss=loss_value)
         metric_logger.update(class_error=0)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
@@ -263,11 +255,6 @@ def get_sedt_predictions(model, criterion, postprocessors, dataloader, decoder, 
 
         # reduce losses over all GPUs for logging purposes
         loss_value = get_reduced_loss(loss_dict, weight_dict, metric_logger)
-        # loss_dict_unscaled = {f'{k}_unscaled': v for k, v in loss_dict.items()}
-        # loss_dict_scaled = {k: v * weight_dict[k] for k, v in loss_dict.items() if k in weight_dict}
-        # losses_scaled = sum(loss_dict_scaled.values())
-        # loss_value = losses_scaled.item()
-        # metric_logger.update(loss=loss_value, **loss_dict_scaled, **loss_dict_unscaled)
 
         # ###################
         # get decoder results
